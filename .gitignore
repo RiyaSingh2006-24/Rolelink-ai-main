@@ -1,0 +1,24 @@
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Runtime files
+*.log
+logs/
+uploads/
+test-results/
+
+# Editor/system files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.sw?
