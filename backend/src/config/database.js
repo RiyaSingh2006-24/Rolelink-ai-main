@@ -7,7 +7,8 @@ const connectDatabase = async () => {
   }
 
   await mongoose.connect(uri, {
-    dbName: 'job'
+    dbName: 'job',
+    serverSelectionTimeoutMS: Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 10000)
   });
 
   console.log('MongoDB connected');

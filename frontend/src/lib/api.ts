@@ -1,6 +1,10 @@
 import { clearAuthSession, getStoredToken } from "@/services/auth";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const DEFAULT_API_URL = import.meta.env.PROD
+  ? ""
+  : "http://localhost:5000";
+const API_URL = (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
+const RETRY_DELAYS_MS = [900, 2500, 5000];
 
 type ApiOptions = Omit<RequestInit, "body"> & { body?: unknown };
 
@@ -26,9 +30,41 @@ const getAuthHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const isTransientNetworkError = (error: unknown) => {
+  if (error instanceof TypeError) return true;
+
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("failed to fetch") || message.includes("networkerror") || message.includes("load failed");
+};
+
+const fetchWithRetry = async (url: string, options: RequestInit = {}) => {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      lastError = error;
+      if (!isTransientNetworkError(error) || attempt === RETRY_DELAYS_MS.length) {
+        throw error;
+      }
+
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  throw lastError;
+};
+
+export const warmApi = () => {
+  void fetchWithRetry(`${API_URL}/api/health`, { method: "GET" }).catch(() => undefined);
+};
+
 export const apiFetch = async <T>(path: string, options: ApiOptions = {}): Promise<T> => {
   const { body, headers, ...rest } = options;
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetchWithRetry(`${API_URL}${path}`, {
     ...rest,
     headers: {
       "Content-Type": "application/json",
@@ -62,7 +98,7 @@ export const apiFetchForm = async <T>(
   formData: FormData,
   options: Omit<RequestInit, "body"> = {}
 ): Promise<T> => {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetchWithRetry(`${API_URL}${path}`, {
     ...options,
     headers: {
       ...getAuthHeaders(),
@@ -95,7 +131,7 @@ export const apiFetchBlob = async (
   options: ApiOptions = {}
 ): Promise<Blob> => {
   const { body, headers, ...rest } = options;
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetchWithRetry(`${API_URL}${path}`, {
     ...rest,
     headers: {
       "Content-Type": "application/json",

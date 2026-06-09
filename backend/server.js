@@ -20,10 +20,11 @@ const applicationRoutes = require('./src/routes/applicationRoutes');
 const resumeRoutes = require('./src/routes/resumeRoutes');
 const notificationRoutes = require('./src/routes/notificationRoutes');
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const server = http.createServer(app);
+const clientBuildPath = path.join(__dirname, '..', 'frontend', 'dist');
 
 const corsOrigin = process.env.CORS_ORIGIN;
 app.use(cors(corsOrigin ? { origin: corsOrigin } : undefined));
@@ -32,7 +33,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-app.get('/', (req, res) => {
+app.get('/api', (req, res) => {
   res.json({
     message: 'RoleLink backend is running',
     docs: '/api/docs',
@@ -52,6 +53,8 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 app.get('/api/docs.json', (req, res) => res.json(openapiSpec));
 
+app.use(express.static(clientBuildPath));
+
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     const message = error.code === 'LIMIT_FILE_SIZE' ? 'Resume PDF must be smaller than 5 MB.' : error.message;
@@ -65,8 +68,18 @@ app.use((error, req, res, next) => {
   return next(error);
 });
 
-app.use((req, res) => {
+app.use('/api', (req, res) => {
   res.status(404).json({ message: 'Route not found' });
+});
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(clientBuildPath, 'index.html'), (error) => {
+    if (error) {
+      res.status(404).json({
+        message: 'Frontend build not found. Run npm run build before starting in production.'
+      });
+    }
+  });
 });
 
 const io = new Server(server, {
@@ -101,11 +114,17 @@ setSocketServer(io);
 
 const startServer = async () => {
   try {
+    validateRequiredEnv();
     await connectDatabase();
     await seedJobsIfEmpty();
     const port = process.env.PORT || 5000;
-    server.listen(port, () => {
-      console.log(`Server running on port ${port}`);
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, () => {
+        server.off('error', reject);
+        console.log(`Server running on port ${port}`);
+        resolve();
+      });
     });
   } catch (error) {
     console.error('Failed to start server', error);
@@ -114,6 +133,23 @@ const startServer = async () => {
 };
 
 startServer();
+
+function validateRequiredEnv() {
+  const missing = ['MONGO_URI', 'JWT_SECRET'].filter((key) => !process.env[key]);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variable(s): ${missing.join(', ')}`);
+  }
+}
+
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled promise rejection', error);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception', error);
+  process.exit(1);
+});
 
 async function seedJobsIfEmpty() {
   const existing = await Job.find({}, 'title companyName').lean();
